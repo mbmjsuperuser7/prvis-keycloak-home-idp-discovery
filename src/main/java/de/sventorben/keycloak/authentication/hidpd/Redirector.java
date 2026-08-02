@@ -6,6 +6,7 @@ import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.authentication.AuthenticationProcessor;
 import org.keycloak.broker.provider.AuthenticationRequest;
 import org.keycloak.broker.provider.IdentityProvider;
+import org.keycloak.broker.provider.UserAuthenticationIdentityProvider;
 import org.keycloak.broker.provider.util.IdentityBrokerState;
 import org.keycloak.models.IdentityProviderModel;
 import org.keycloak.models.KeycloakSession;
@@ -46,11 +47,25 @@ final class Redirector {
         new HomeIdpAuthenticationFlowContext(context).loginHint().copyTo(clientSessionCode);
         IdentityProvider<?> identityProvider = getIdentityProvider(keycloakSession, idp.getAlias());
 
-        Response response = identityProvider.performLogin(createAuthenticationRequest(providerAlias, identityProvider, clientSessionCode));
+        // FIXED for Keycloak 26.4.x/26.5.x: performLogin and supportsLongStateParameter
+        // moved from the base IdentityProvider interface onto the more specific
+        // UserAuthenticationIdentityProvider sub-interface (confirmed directly against
+        // the actual current Keycloak Javadocs, not guessed). Every real, user-facing
+        // social/OIDC broker (Google, GitHub, Microsoft, etc.) implements this
+        // sub-interface in practice, but this checks explicitly rather than assuming,
+        // failing safely (log + no-op) instead of risking a ClassCastException if some
+        // future or unusual provider type doesn't.
+        if (!(identityProvider instanceof UserAuthenticationIdentityProvider)) {
+            LOG.warnf("Identity Provider %s does not support user authentication (not a UserAuthenticationIdentityProvider); cannot redirect.", providerAlias);
+            return;
+        }
+        UserAuthenticationIdentityProvider<?> userAuthProvider = (UserAuthenticationIdentityProvider<?>) identityProvider;
+
+        Response response = userAuthProvider.performLogin(createAuthenticationRequest(providerAlias, userAuthProvider, clientSessionCode));
         context.forceChallenge(response);
     }
 
-    private AuthenticationRequest createAuthenticationRequest(String providerAlias, IdentityProvider<?> identityProvider, ClientSessionCode<AuthenticationSessionModel> clientSessionCode) {
+    private AuthenticationRequest createAuthenticationRequest(String providerAlias, UserAuthenticationIdentityProvider<?> identityProvider, ClientSessionCode<AuthenticationSessionModel> clientSessionCode) {
         AuthenticationSessionModel authSession = null;
         IdentityBrokerState encodedState = null;
 
